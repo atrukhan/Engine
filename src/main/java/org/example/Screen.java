@@ -1,6 +1,7 @@
 package org.example;
 
 import com.aparapi.Kernel;
+import com.aparapi.Range;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -23,7 +24,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
     private final Mat4x4 matProjection;
     private final Mat4x4 matViewport;
     private int camSpeed = 1;
-    private Vector modelPos = new Vector(0.d, 1.d, -15.d);
+    private Vector modelPos = new Vector(0.d, 0.d, -10.d);
     private Vector cameraPos = new Vector(0.d,0.d,0.d);
     private Vector target = new Vector(0.d, 0.d, -1.d);
     private Vector lookDir;
@@ -59,7 +60,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         matViewport = Mat4x4.getViewPort(screenSize.getWidth(), screenSize.getHeight());
 
         String filename = "head";
-        String f = "1";
+        String f = "head";
         model = ObjParser.parse(f);
         models = partition(model);
 
@@ -83,7 +84,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
 
         BufferedImage img = new BufferedImage(SCREEN_SIZE.width, SCREEN_SIZE.height, BufferedImage.TYPE_INT_RGB);
 
-//        angle += Math.PI / 8 * time / 1000;
+        angle += Math.PI / 8 * time / 1000;
 
 //--------------------update camera lookDir && create view matrix--------------------
         Mat4x4 matCameraRotate = Mat4x4.getRotationYMat(camAngleY);
@@ -95,7 +96,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
 //-----------------------------------------------------------------------------------
 
         MatCollection matCollection = new MatCollection.MatCollectionBuilder()
-                .setAngle(Math.toRadians(80), angle, Math.toRadians(0))
+                .setAngle(Math.toRadians(180), angle, Math.toRadians(0))
                 .setTransition(modelPos)
                 .setView(matView)
                 .setProjection(matProjection)
@@ -115,37 +116,10 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         for (Triangle triangle : toRaster)
             rasterTriangle(img, triangle, matCollection.getAngle());
 
-//        double[] tArr = new double[toRaster.size()*9];
-//        double[] nArr = new double[toRaster.size()*9];
-//        int[] finImgArr = new int[SCREEN_SIZE.width * SCREEN_SIZE.height];
-//        double[] zb = new double[Z_BUFFER_WIDTH* Z_BUFFER_HEIGHT];
-//        Arrays.fill(zb, Double.MIN_VALUE);
-//        for (int i = 0; i < toRaster.size(); i = i+9){
-//            tArr[i] = toRaster.get(i).v1.x;
-//            tArr[i+1] = toRaster.get(i).v1.y;
-//            tArr[i+2] = toRaster.get(i).v1.z;
-//            tArr[i+3] = toRaster.get(i).v2.x;
-//            tArr[i+4] = toRaster.get(i).v2.y;
-//            tArr[i+5] = toRaster.get(i).v2.z;
-//            tArr[i+6] = toRaster.get(i).v3.x;
-//            tArr[i+7] = toRaster.get(i).v3.y;
-//            tArr[i+8] = toRaster.get(i).v3.z;
-//
-//            nArr[i] = toRaster.get(i).vt1.x;
-//            nArr[i+1] = toRaster.get(i).vt1.y;
-//            nArr[i+2] = toRaster.get(i).vt1.z;
-//            nArr[i+3] = toRaster.get(i).vt2.x;
-//            nArr[i+4] = toRaster.get(i).vt2.y;
-//            nArr[i+5] = toRaster.get(i).vt2.z;
-//            nArr[i+6] = toRaster.get(i).vt3.x;
-//            nArr[i+7] = toRaster.get(i).vt3.y;
-//            nArr[i+8] = toRaster.get(i).vt3.z;
-//        }
-
-
         Instant finish = Instant.now();
 
         img.getGraphics().drawString(String.valueOf(1000 / Duration.between(start, finish).toMillis()), 10, 10);
+
         g.drawImage(img, 0, 0, null);
     }
 
@@ -227,16 +201,19 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                         tri.vt3,
                         tri.color
                 );
-                double w1 = 1 / triViewed.v1.w;
-                double w2 = 1 / triViewed.v2.w;
-                double w3 = 1 / triViewed.v3.w;
+//                double w1 = 1 / triViewed.v1.w;
+//                double w2 = 1 / triViewed.v2.w;
+//                double w3 = 1 / triViewed.v3.w;
+                double w1 = Mat4x4.multiplyVector(tri.v1, matCollection.getFinalProjection()).w;
+                double w2 = Mat4x4.multiplyVector(tri.v2, matCollection.getFinalProjection()).w;
+                double w3 = Mat4x4.multiplyVector(tri.v3, matCollection.getFinalProjection()).w;
 
                 newTri.v1 = Vector.div(newTri.v1, newTri.v1.w);
                 newTri.v2 = Vector.div(newTri.v2, newTri.v2.w);
                 newTri.v3 = Vector.div(newTri.v3, newTri.v3.w);
-                newTri.v1.w = w1;
-                newTri.v2.w = w2;
-                newTri.v3.w = w3;
+                newTri.v1.w = Math.abs(w1);
+                newTri.v2.w = Math.abs(w2);
+                newTri.v3.w = Math.abs(w3);
 
                 if (!polygonRejection(newTri)) {
 
@@ -246,6 +223,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                     newTri.c1 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v1, matCollection.getWorld())));
                     newTri.c2 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v2, matCollection.getWorld())));
                     newTri.c3 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v3, matCollection.getWorld())));
+
                     toRaster.add(newTri);
                 }
             }
@@ -375,7 +353,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         n = Vector.normalize(Mat4x4.multiplyVector(n, angle));
         double spec = specularColor.getRed() / 255.d;
 //        Color triColor = Color.white;
-        double kFon = 0.1d;
+        double kFon = 0.7d;
 
 
 
@@ -396,38 +374,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         return Triangle.getShade(triColor,  cosMir + kFon + kDiffuse * cos);
     }
 
-    private void kernelRaster(int index, int[] img, int width, int height, double[] zb, int bufWidth, double[] tri, double[] texture){
 
-        for (int i = index * width; i < (index + 1)*width; i++){
-            for (int tInd = 0; tInd < tri.length; tInd= tInd + 9){
-                double triangleArea = (tri[tInd+1] - tri[tInd+7]) * (tri[tInd+3] - tri[tInd+6]) + (tri[tInd+4] - tri[tInd+7]) * (tri[tInd+6] - tri[tInd]);
-
-            }
-        }
-
-        int minX = (int) Math.max(0, Math.ceil(Math.min(tri[index], Math.min(tri[index+3], tri[index+6]))));
-        int maxX = (int) Math.min(width - 1, Math.floor(Math.max(tri[index], Math.max(tri[index+3], tri[index+6]))));
-        int minY = (int) Math.max(0, Math.ceil(Math.min(tri[index+1], Math.min(tri[index+4], tri[index+7]))));
-        int maxY = (int) Math.min(height - 1, Math.floor(Math.max(tri[index+1], Math.max(tri[index+4], tri[index+7]))));
-
-        double triangleArea = (tri[index+1] - tri[index+7]) * (tri[index+3] - tri[index+6]) + (tri[index+4] - tri[index+7]) * (tri[index+6] - tri[index]);
-
-        for (int y = minY; y <= maxY; y++) {
-            for (int x = minX; x <= maxX; x++) {
-                double b1 = ((y - tri[index+7]) * (tri[index+3] - tri[index+6]) + (tri[index+4] - tri[index+7]) * (tri[index+6] - x)) / triangleArea;
-                double b2 = ((y - tri[index+1]) * (tri[index+6] - tri[index]) + (tri[index+7] - tri[index+1]) * (tri[index] - x)) / triangleArea;
-                double b3 = ((y - tri[index+4]) * (tri[index] - tri[index+3]) + (tri[index+1] - tri[index+4]) * (tri[index+3] - x)) / triangleArea;
-
-                if (b1 >= 0 && b2 >= 0 && b3 >= 0) {
-                    double zDepth = tri[index+2] * b1 + tri[index+5] * b2 + tri[index+8] * b3;
-                    if(zDepth > zb[x + y * bufWidth]) {
-                        zb[x + y * bufWidth] = zDepth;
-
-                    }
-                }
-            }
-        }
-    }
 
 
     private void rasterTriangle(BufferedImage img, Triangle triangle, Mat4x4 angle){
@@ -456,9 +403,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                     if(Double.compare(zDepth, zBuffer[x][y]) > 0) {
                         zBuffer[x][y] = zDepth;
 
-//                        Vector normir1 = Vector.normalize(v1);
-//                        Vector normir2 = Vector.normalize(v2);
-//                        Vector normir3 = Vector.normalize(v3);
+
                         Vector normir1 = v1;
                         Vector normir2 = v2;
                         Vector normir3 = v3;
@@ -466,10 +411,14 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
 
                         double w = 1 / (normir1.w * b1 + normir2.w * b2 + normir3.w * b3);
 
-//                        int textureX = (int) Math.floor((triangle.vt1.x * b1 + triangle.vt2.x * b2 + triangle.vt3.x * b3) * colorMap.getWidth()-1);
-//                        int textureY = (int) Math.floor((triangle.vt1.y * b1 + triangle.vt2.y * b2 + triangle.vt3.y * b3) * colorMap.getHeight()-1);
-                        int textureX = (int) Math.min(Math.floor((triangle.vt1.x * b1 / normir1.w + triangle.vt2.x * b2 / normir2.w + triangle.vt3.x * b3 / normir3.w) * w * colorMap.getWidth()), colorMap.getWidth()-1);
-                        int textureY = (int) Math.min(Math.floor((triangle.vt1.y * b1 / normir1.w + triangle.vt2.y * b2 / normir2.w + triangle.vt3.y * b3 / normir3.w) * w * colorMap.getHeight()), colorMap.getHeight()-1);
+                        Vector b = new Vector(b1 / v1.w, b2 / v2.w, b3 / v3.w);
+                        b = Vector.div(b, b1 / v1.w + b2 / v2.w + b3 / v3.w);
+
+//                        int textureX = (int) Math.floor((triangle.vt1.x * b1 / normir1.w + triangle.vt2.x * b2 / normir2.w + triangle.vt3.x * b3 / normir3.w) * w * colorMap.getWidth()-1);
+//                        int textureY = (int) Math.floor((triangle.vt1.y * b1 / normir1.w + triangle.vt2.y * b2 / normir2.w + triangle.vt3.y * b3 / normir3.w) * w * colorMap.getHeight()-1);
+
+                        int textureX = (int) Math.floor((triangle.vt1.x * b.x + triangle.vt2.x * b.y + triangle.vt3.x * b.z) * colorMap.getWidth()-1);
+                        int textureY = (int) Math.floor((triangle.vt1.y * b.x + triangle.vt2.y * b.y + triangle.vt3.y * b.z) * colorMap.getHeight()-1);
 
 
 
