@@ -77,6 +77,15 @@ public class Mat4x4 {
         });
     }
 
+    public static Mat4x4 getScaleMat(double scaleX, double scaleY, double scaleZ){
+        return new Mat4x4(new double[][]{
+                {scaleX, 0.d, 0.d, 0.d},
+                {0.d, scaleY, 0.d, 0.d},
+                {0.d, 0.d, scaleZ, 0.d},
+                {0.d, 0.d, 0.d, 1.d}
+        });
+    }
+
     public static Mat4x4 getRotationZMat(double angleRad){
         return new Mat4x4(new double[][]{
                 {Math.cos(angleRad), Math.sin(angleRad), 0.d, 0.d},

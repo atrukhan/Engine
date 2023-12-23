@@ -2,6 +2,7 @@ package org.example;
 
 public class MatCollection {
     private Mat4x4 angle;
+    private Mat4x4 scale;
     private Mat4x4 transition;
     private Mat4x4 world;
     private Mat4x4 view;
@@ -12,6 +13,7 @@ public class MatCollection {
     private Mat4x4 finalViewport;
     public MatCollection(MatCollectionBuilder builder) {
         this.angle = builder.angle;
+        this.scale = builder.scale;
         this.transition = builder.transition;
         this.view = builder.view;
         this.projection = builder.projection;
@@ -19,8 +21,10 @@ public class MatCollection {
 
         if(builder.world != null)
             this.world = builder.world;
+        else if (this.angle != null && this.transition != null && this.scale != null)
+            this.world = Mat4x4.multiplyMatrix(Mat4x4.multiplyMatrix(this.angle, this.scale), this.transition);
         else if (this.angle != null && this.transition != null)
-            this.world = Mat4x4.multiplyMatrix(builder.angle, builder.transition);
+            this.world = Mat4x4.multiplyMatrix(this.angle, this.transition);
         else
             this.world = null;
 
@@ -49,6 +53,10 @@ public class MatCollection {
 
     public Mat4x4 getAngle() {
         return angle;
+    }
+
+    public Mat4x4 getScale(){
+        return scale;
     }
 
     public Mat4x4 getTransition() {
@@ -85,6 +93,7 @@ public class MatCollection {
 
     public static class MatCollectionBuilder {
         private Mat4x4 angle;
+        private Mat4x4 scale;
         private Mat4x4 transition;
         private Mat4x4 world;
         private Mat4x4 view;
@@ -102,6 +111,11 @@ public class MatCollection {
             Mat4x4 ry = Mat4x4.getRotationYMat(angleY);
             Mat4x4 rz = Mat4x4.getRotationYMat(angleZ);
             this.angle = Mat4x4.multiplyMatrix(Mat4x4.multiplyMatrix(rx, ry), rz);
+            return this;
+        }
+
+        public MatCollectionBuilder setScale(double scaleX, double scaleY, double scaleZ){
+            this.scale = Mat4x4.getScaleMat(scaleX, scaleY, scaleZ);
             return this;
         }
 

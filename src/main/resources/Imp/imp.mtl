@@ -1,0 +1,29 @@
+# Blender 4.0.1 MTL File: 'None'
+# www.blender.org
+
+newmtl models_monsters_imp_imp_arms
+Ks 0.04 0.04 0.04
+map_Kd _images/models_monsters_imp_imp_arms.png  путь к png
+map_Ks _images/models_monsters_imp_imp_arms_s.png путь к _s.png
+map_Ns _images/models_monsters_imp_imp_arms_g.png путь к _g.png
+
+
+newmtl models_monsters_imp_imp_eyes
+map_Kd _images/models_monsters_imp_imp_eyes.png  путь к png
+map_Ks _images/models_monsters_imp_imp_eyes_s.png путь к _s.png
+map_Ke _images/models_monsters_imp_imp_eyes_e.png путь к _e.png
+
+newmtl models_monsters_imp_imp_head
+map_Kd _images/models_monsters_imp_imp_head.png  путь к png
+map_Ks _images/models_monsters_imp_imp_head_s.png путь к _s.png
+map_Ns _images/models_monsters_imp_imp_head_g.png путь к _g.png
+
+newmtl models_monsters_imp_imp_legs
+map_Kd _images/models_monsters_imp_imp_legs.png  путь к png
+map_Ks _images/models_monsters_imp_imp_legs_s.png путь к _s.png
+map_Ns _images/models_monsters_imp_imp_legs_g.png путь к _g.png
+
+newmtl models_monsters_imp_imp_torso
+map_Kd _images/models_monsters_imp_imp_torso.png  путь к png
+map_Ks _images/models_monsters_imp_imp_torso_s.png путь к _s.png
+map_Ns _images/models_monsters_imp_imp_torso_g.png путь к _g.png

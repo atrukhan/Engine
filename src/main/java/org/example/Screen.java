@@ -1,15 +1,10 @@
 package org.example;
 
-import com.aparapi.Kernel;
-import com.aparapi.Range;
-
-import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.Timer;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,10 +14,10 @@ import java.util.List;
 //cor = sum(a,b)(a*b)/sqrt(sum(a)(a^2)) + sqrt(sum(b)(b^2))
 public class Screen extends JPanel implements KeyListener, MouseListener, MouseMotionListener, MouseWheelListener, ActionListener{
 
-    private final Dimension SCREEN_SIZE;
-
-    private final Mat4x4 matProjection;
-    private final Mat4x4 matViewport;
+    private final Mode MODE = Mode.Animation;
+    private Dimension SCREEN_SIZE;
+    private Mat4x4 matProjection;
+    private Mat4x4 matViewport;
     private int camSpeed = 1;
     private Vector modelPos = new Vector(0.d, 0.d, -10.d);
     private Vector cameraPos = new Vector(0.d,0.d,0.d);
@@ -39,46 +34,108 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
     private static final int Z_BUFFER_WIDTH = 1920;
     private final double[][] zBuffer = new double[Z_BUFFER_WIDTH][Z_BUFFER_HEIGHT];
     private static final int THREAD_COUNT = 5;
-    private final List<List<Triangle>> models;
-    private final List<Triangle> model;
+    private List<List<Triangle>> models;
+    private List<Triangle> model;
+    private List<List<Triangle>> animationModel;
+    private List<List<List<Triangle>>> animationModels;
     private final List<Thread> threads = new ArrayList<>();
     private Instant lastTime = Instant.now();
+    private final Instant START;
+
     private double time = 0;
     private double angle = 0.d;
+//    private int frame = 1;
+    private double frame = 1.d;
+    private  int framesCount;
+    private final int ANIMATION_FPS = 30;
+    private double objScaling;
 
-    private final BufferedImage colorMap;
-    private final BufferedImage normalMap;
-    private final BufferedImage specularMap;
+    private HashMap<String, Integer> texturesMap = new HashMap<>();
+    private Texture[] textures;
 
     public Screen(Dimension screenSize) throws IOException {
         super();
 
-        SCREEN_SIZE = screenSize;
+        if(MODE == Mode.Object){
+            initObject(screenSize);
 
+        } else {
+            initAnimation(screenSize);
+        }
+        START = Instant.now();
+    }
+
+
+    public void paintComponent(Graphics g)
+    {
+        if(MODE == Mode.Object){
+            paintObject(g);
+        } else {
+            paintAnimation(g);
+        }
+    }
+
+    private void initAnimation(Dimension screenSize) throws IOException {
+        SCREEN_SIZE = screenSize;
 
         matProjection = Mat4x4.getProjectionMat(45.d, screenSize.getWidth() / screenSize.getHeight(), 0.1d, 1000.d);
         matViewport = Mat4x4.getViewPort(screenSize.getWidth(), screenSize.getHeight());
 
+        ObjParser op = new ObjParser();
+
+
+//        String filename = "imp";
+//        String folder = "Imp/";
+//        objScaling = 0.01;
+        String filename = "doom_slayer";
+        String folder = "DoomSlayer/";
+        objScaling = 1.d;
+
+        animationModel = op.parseAnimation(folder, filename);
+        animationModels = animationPartition(animationModel);
+
+        textures = op.getTextures();
+        framesCount = op.getFramesCount();
+
+        for (int i = 0; i < textures.length; i++){
+            texturesMap.put(textures[i].getMaterial(), i);
+        }
+
+        Timer timer = new Timer(10, this);
+        timer.setRepeats(true);
+        timer.start();
+
+    }
+
+    private void initObject(Dimension screenSize) throws IOException{
+        SCREEN_SIZE = screenSize;
+
+        matProjection = Mat4x4.getProjectionMat(45.d, screenSize.getWidth() / screenSize.getHeight(), 0.1d, 1000.d);
+        matViewport = Mat4x4.getViewPort(screenSize.getWidth(), screenSize.getHeight());
+
+        ObjParser op = new ObjParser();
+
+        String folder = "head_textures/";
         String filename = "head";
-        String f = "head";
-        model = ObjParser.parse(f);
+        objScaling = 1.d;
+
+        model = op.parse(folder, filename);
         models = partition(model);
 
-        File file = new File("src/main/resources/" + filename + "_color.png");
-        colorMap = ImageIO.read(file);
-        file = new File("src/main/resources/" + filename + "_normal.png");
-        normalMap = ImageIO.read(file);
-        file = new File("src/main/resources/" + filename + "_specular.png");
-        specularMap = ImageIO.read(file);
+        textures = op.getTextures();
+
+        for (int i = 0; i < textures.length; i++){
+            texturesMap.put(textures[i].getMaterial(), i);
+        }
 
         Timer timer = new Timer(10, this);
         timer.setRepeats(true);
         timer.start();
     }
 
-    public void paintComponent(Graphics g)
-    {
+    private void paintObject(Graphics g){
         Instant start = Instant.now();
+
         time = Duration.between(lastTime, start).toMillis();
         lastTime = start;
 
@@ -97,6 +154,7 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
 
         MatCollection matCollection = new MatCollection.MatCollectionBuilder()
                 .setAngle(Math.toRadians(180), angle, Math.toRadians(0))
+                .setScale(objScaling, objScaling, objScaling)
                 .setTransition(modelPos)
                 .setView(matView)
                 .setProjection(matProjection)
@@ -104,21 +162,80 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                 .build();
 
 
+        List<Triangle> toClipping = new ArrayList<>();
+        threadTransformation(toClipping, matCollection, models);
+        List<Triangle> toRaster = new ArrayList<>();
+        threadClipping(toClipping, toRaster);
+
+        fillZBuffer(zBuffer);
+
+        for (Triangle triangle : toRaster)
+            rasterTriangle(img, triangle, matCollection.getAngle());
+
+        Instant finish = Instant.now();
+        long dur = Duration.between(start, finish).toMillis();
+        if(dur != 0)
+            img.getGraphics().drawString(String.valueOf(1000 / dur), 10, 10);
+
+        g.drawImage(img, 0, 0, null);
+    }
+
+    private void paintAnimation(Graphics g){
+        Instant start = Instant.now();
+        time = Duration.between(lastTime, start).toMillis();
+        lastTime = start;
+
+        BufferedImage img = new BufferedImage(SCREEN_SIZE.width, SCREEN_SIZE.height, BufferedImage.TYPE_INT_RGB);
+
+//        angle += Math.PI / 8 * time / 1000;
+//        angle = Math.PI / 8;
+        angle = Math.PI;
+//--------------------update camera lookDir && create view matrix--------------------
+        Mat4x4 matCameraRotate = Mat4x4.getRotationYMat(camAngleY);
+        lookDir = Mat4x4.multiplyVector(Vector.sub(cameraPos,target), matCameraRotate);
+        rightDir = Mat4x4.multiplyVector(Vector.sub(cameraPos,rightTarget), matCameraRotate);
+        upDir = Vector.sub(cameraPos,upTarget);
+        Vector targetNew = Vector.add(cameraPos, lookDir);
+        Mat4x4 matView = Mat4x4.getPointAtMat(cameraPos, targetNew, up);
+//-----------------------------------------------------------------------------------
+
+        MatCollection matCollection = new MatCollection.MatCollectionBuilder()
+                .setAngle(Math.toRadians(180), angle, Math.toRadians(0))
+                .setScale(objScaling, objScaling, objScaling)
+                .setTransition(modelPos)
+                .setView(matView)
+                .setProjection(matProjection)
+                .setViewport(matViewport)
+                .build();
+
+
+        int fInd = (int) frame;
+        int sInd = (fInd + 1) % framesCount;
+//        if(fInd == FRAMES_COUNT-1){
+//            sInd = 0;
+//        }else{
+//            sInd = fInd + 1;
+//        }
+        double kof = frame - fInd;
+        List<List<Triangle>> temp = animationInterpolation(animationModels.get(fInd), animationModels.get(sInd), kof);
 
         List<Triangle> toClipping = new ArrayList<>();
-        threadTransformation(toClipping, matCollection);
+//        threadTransformation(toClipping, matCollection, animationModels.get(frame-1));
+        threadTransformation(toClipping, matCollection, temp);
+
 
         fillZBuffer(zBuffer);
 
         List<Triangle> toRaster = new ArrayList<>();
         threadClipping(toClipping, toRaster);
 
-        for (Triangle triangle : toRaster)
+        for (Triangle triangle : toRaster) {
             rasterTriangle(img, triangle, matCollection.getAngle());
-
+        }
         Instant finish = Instant.now();
-
-        img.getGraphics().drawString(String.valueOf(1000 / Duration.between(start, finish).toMillis()), 10, 10);
+        long dur = Duration.between(start, finish).toMillis();
+        if(dur != 0)
+            img.getGraphics().drawString(String.valueOf(1000 / Duration.between(start, finish).toMillis()), 10, 10);
 
         g.drawImage(img, 0, 0, null);
     }
@@ -133,12 +250,45 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         return models;
     }
 
-    private void threadTransformation(List<Triangle> toClipping, MatCollection matCollection){
+    private List<List<List<Triangle>>> animationPartition(List<List<Triangle>> model){
+        List<List<List<Triangle>>> mmm = new ArrayList<>() ;
+        for (List<Triangle> m : model){
+            List<List<Triangle>> models = new ArrayList<>();
+            int size = m.size();
+            for (int i = 0; i < THREAD_COUNT-1; i++){
+                models.add(m.subList(size/THREAD_COUNT*i, size/THREAD_COUNT*(i+1)));
+            }
+            models.add(m.subList(size/THREAD_COUNT*(THREAD_COUNT-1), size));
+            mmm.add(models);
+        }
+
+        return mmm;
+    }
+
+    private List<List<Triangle>> animationInterpolation(List<List<Triangle>> firstFrame, List<List<Triangle>> secondFrame, double k){
+        List<List<Triangle>> res = new ArrayList<>();
+
+        int s = firstFrame.size(), ss = 0;
+        for(int i = 0; i < s; i++){
+            ss = firstFrame.get(i).size();
+            List<Triangle> temp = new ArrayList<>();
+            for (int j = 0; j < ss; j++){
+                temp.add(Triangle.interpolate(firstFrame.get(i).get(j), secondFrame.get(i).get(j), k));
+            }
+            res.add(temp);
+        }
+
+
+        return res;
+    }
+
+
+    private void threadTransformation(List<Triangle> toClipping, MatCollection matCollection, List<List<Triangle>> source){
         List<List<Triangle>> toClippings = new ArrayList<>();
 
         for (int i = 0; i < THREAD_COUNT; i++) {
             toClippings.add(new ArrayList<>());
-            List<Triangle> tempM = models.get(i);
+            List<Triangle> tempM = source.get(i);
             List<Triangle> tempC = toClippings.get(i);
             Thread thread = new Thread(new Runnable() {
                 @Override
@@ -199,11 +349,9 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                         tri.vt1,
                         tri.vt2,
                         tri.vt3,
-                        tri.color
+                        tri.color,
+                        tri.textureFilename
                 );
-//                double w1 = 1 / triViewed.v1.w;
-//                double w2 = 1 / triViewed.v2.w;
-//                double w3 = 1 / triViewed.v3.w;
                 double w1 = Mat4x4.multiplyVector(tri.v1, matCollection.getFinalProjection()).w;
                 double w2 = Mat4x4.multiplyVector(tri.v2, matCollection.getFinalProjection()).w;
                 double w3 = Mat4x4.multiplyVector(tri.v3, matCollection.getFinalProjection()).w;
@@ -223,6 +371,9 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                     newTri.c1 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v1, matCollection.getWorld())));
                     newTri.c2 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v2, matCollection.getWorld())));
                     newTri.c3 = Vector.normalize(Vector.sub(cameraPos, Mat4x4.multiplyVector(tri.v3, matCollection.getWorld())));
+
+                    newTri.textureIndex = texturesMap.get(newTri.textureFilename);
+
 
                     toRaster.add(newTri);
                 }
@@ -323,37 +474,48 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         }
     }
 
-    private void flatShading(Triangle triangle){
-
-        Vector lightToV1 = Vector.normalize(Vector.sub(lightPos, triangle.v1));
-        Vector lightToV2 = Vector.normalize(Vector.sub(lightPos, triangle.v2));
-        Vector lightToV3 = Vector.normalize(Vector.sub(lightPos, triangle.v3));
 
 
-        double cos1 = Math.max(lightToV1.dot(triangle.vn1) / (lightToV1.mod()*triangle.vn1.mod()), 0.01d);
-        double cos2 = Math.max(lightToV2.dot(triangle.vn2) / (lightToV2.mod()*triangle.vn2.mod()), 0.01d);
-        double cos3 = Math.max(lightToV3.dot(triangle.vn3) / (lightToV3.mod()*triangle.vn3.mod()), 0.01d);
+    private Color phongShading(Vector light, Vector camera, Vector vn, Vector vt, Mat4x4 angle, String textureName, int index){
 
-        Color triColor = Color.white;
-        Color color1 = Triangle.getShade(triColor, cos1);
-        Color color2 = Triangle.getShade(triColor, cos2);
-        Color color3 = Triangle.getShade(triColor, cos3);
+        Vector n;
+        Color triColor = null;
+        double spec = 0;
+        double kShine = 16.d;
+        if (MODE == Mode.Object){
+            triColor = new Color(textures[index].getColorImage().getRGB((int)Math.floor(vt.x * (textures[index].getColorImage().getWidth() - 1)), textures[index].getColorImage().getHeight() - (int)Math.floor(vt.y * (textures[index].getColorImage().getHeight() - 1))));
 
-        triangle.color = Triangle.getMediumColor(color1, color2, color3);
-    }
+            Color specularColor = new Color(textures[index].getSpecularImage().getRGB((int)Math.floor(vt.x * (textures[index].getSpecularImage().getWidth() - 1)), textures[index].getSpecularImage().getHeight() - (int)Math.floor(vt.y * (textures[index].getSpecularImage().getHeight() - 1))));
 
-    private Color phongShading(Vector light, Vector camera, Vector vn, Vector vt, Mat4x4 angle){
+            Color normalColor = new Color(textures[index].getNormalImage().getRGB((int)Math.floor(vt.x * (textures[index].getNormalImage().getWidth() - 1)), textures[index].getNormalImage().getHeight() - (int)Math.floor(vt.y * (textures[index].getNormalImage().getHeight() - 1))));
+
+            n = new Vector(normalColor.getRed() / 255.d * 2 - 1, normalColor.getGreen() / 255.d * 2 - 1, normalColor.getBlue() / 255.d * 2 - 1);
+            n = Vector.normalize(Mat4x4.multiplyVector(n, angle));
+            spec = specularColor.getRed() / 255.d;
+        }else{
+
+            triColor = new Color(textures[index].getColorImage().getRGB((int)Math.floor(vt.x * (textures[index].getColorImage().getWidth() - 1)), textures[index].getColorImage().getHeight() - (int)Math.floor(vt.y * (textures[index].getColorImage().getHeight() - 1))));
+
+            if(textures[index].getSpecularImage() != null){
+                Color specularColor = new Color(textures[index].getSpecularImage().getRGB((int)Math.floor(vt.x * (textures[index].getSpecularImage().getWidth() - 1)), textures[index].getSpecularImage().getHeight() - (int)Math.floor(vt.y * (textures[index].getSpecularImage().getHeight() - 1))));
+                spec = specularColor.getRed() / 255.d;
+            }else {
+                spec = 0.5;
+            }
+                 if(textures[index].getGlossImage() != null) {
+                Color shineColor = new Color(textures[index].getGlossImage().getRGB((int) Math.floor(vt.x * (textures[index].getGlossImage().getWidth() - 1)), textures[index].getGlossImage().getHeight() - (int) Math.floor(vt.y * (textures[index].getGlossImage().getHeight() - 1))));
+                kShine = Math.pow((shineColor.getRed() / 255.d), 4) * 1024;
+            }else{
+                kShine = 15.d;
+            }
+            n = vn;
+
+
+        }
 
 
 
-        Color triColor = new Color(colorMap.getRGB((int)vt.x, colorMap.getHeight() - (int)vt.y));
-        Color normalColor = new Color(normalMap.getRGB((int)vt.x, normalMap.getHeight() - (int)vt.y));
-        Color specularColor = new Color(specularMap.getRGB((int)vt.x, specularMap.getHeight() - (int)vt.y));
-        Vector n = new Vector(normalColor.getRed() / 255.d * 2 - 1, normalColor.getGreen() / 255.d * 2 - 1, normalColor.getBlue() / 255.d * 2 - 1);
-        n = Vector.normalize(Mat4x4.multiplyVector(n, angle));
-        double spec = specularColor.getRed() / 255.d;
-//        Color triColor = Color.white;
-        double kFon = 0.7d;
+        double kFon = 0.1d;
 
 
 
@@ -361,17 +523,15 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         double cos = Math.max(light.dot(n), 0.d);
 
 
-        double kMirror = 0.8d, kShine = 30.d;
+         // ^4 * 1024
         Vector mirLight = Vector.sub(light, Vector.prod(n, 2 * light.dot(n)));
         double cosMir = spec * Math.pow(Math.max(0.d, mirLight.dot(camera)) , kShine);
 
 
-
-//        return fon;
-//        return diffuse;
-//        return mirror;
-
+//
         return Triangle.getShade(triColor,  cosMir + kFon + kDiffuse * cos);
+
+//        return Triangle.getShade(triColor,  cosMir);
     }
 
 
@@ -403,24 +563,14 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                     if(Double.compare(zDepth, zBuffer[x][y]) > 0) {
                         zBuffer[x][y] = zDepth;
 
-
-                        Vector normir1 = v1;
-                        Vector normir2 = v2;
-                        Vector normir3 = v3;
-
-
-                        double w = 1 / (normir1.w * b1 + normir2.w * b2 + normir3.w * b3);
-
                         Vector b = new Vector(b1 / v1.w, b2 / v2.w, b3 / v3.w);
                         b = Vector.div(b, b1 / v1.w + b2 / v2.w + b3 / v3.w);
 
-//                        int textureX = (int) Math.floor((triangle.vt1.x * b1 / normir1.w + triangle.vt2.x * b2 / normir2.w + triangle.vt3.x * b3 / normir3.w) * w * colorMap.getWidth()-1);
-//                        int textureY = (int) Math.floor((triangle.vt1.y * b1 / normir1.w + triangle.vt2.y * b2 / normir2.w + triangle.vt3.y * b3 / normir3.w) * w * colorMap.getHeight()-1);
 
-                        int textureX = (int) Math.floor((triangle.vt1.x * b.x + triangle.vt2.x * b.y + triangle.vt3.x * b.z) * colorMap.getWidth()-1);
-                        int textureY = (int) Math.floor((triangle.vt1.y * b.x + triangle.vt2.y * b.y + triangle.vt3.y * b.z) * colorMap.getHeight()-1);
-
-
+                        double textureX = (triangle.vt1.x * b.x + triangle.vt2.x * b.y + triangle.vt3.x * b.z);
+                        double textureY = (triangle.vt1.y * b.x + triangle.vt2.y * b.y + triangle.vt3.y * b.z);
+//                        int textureX = (int) Math.floor((triangle.vt1.x * b.x + triangle.vt2.x * b.y + triangle.vt3.x * b.z) * colorMap.getWidth()-1);
+//                        int textureY = (int) Math.floor((triangle.vt1.y * b.x + triangle.vt2.y * b.y + triangle.vt3.y * b.z) * colorMap.getHeight()-1);
 
                         Vector n = Vector.normalize(Vector.add(Vector.add(Vector.prod(triangle.vn1, b1), Vector.prod(triangle.vn2, b2)), Vector.prod(triangle.vn3, b3)));
                         Vector l = Vector.normalize(Vector.add(Vector.add(Vector.prod(triangle.l1, b1), Vector.prod(triangle.l2, b2)), Vector.prod(triangle.l3, b3)));
@@ -432,7 +582,9 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
                                         c,
                                         n,
                                         new Vector(textureX, textureY, 0),
-                                        angle
+                                        angle,
+                                        triangle.textureFilename,
+                                        triangle.textureIndex
                                 ).getRGB()
                         );
                     }
@@ -441,55 +593,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
         }
     }
 
-
-
-
-
-    private void dda(BufferedImage img, double x1, double y1, double x2, double y2){
-
-        int ix1 = (int) Math.round(x1);
-        int iy1 = (int) Math.round(y1);
-        int ix2 = (int) Math.round(x2);
-        int iy2 = (int) Math.round(y2);
-
-        int deltaX = Math.abs(ix1 - ix2);
-        int deltaY = Math.abs(iy1 - iy2);
-
-        int length = Math.max(deltaX, deltaY);
-        if (length == 0){
-            if(ix1 >= 0 && ix1 < img.getWidth() && iy1 >= 0 && iy1 < img.getHeight() ){
-                img.setRGB(ix1, iy1, 0xFFFFFF);
-            }
-        }else{
-            double dx = (x2-x1) / length;
-            double dy = (y2-y1) / length;
-
-            int roundX;
-            int roundY;
-
-            double x = x1;
-            double y = y1;
-
-            int width = img.getWidth();
-            int height = img.getHeight();
-
-            length++;
-            while (length-- > 0){
-                x += dx;
-                y += dy;
-
-                roundX = (int) Math.round(x);
-                roundY = (int) Math.round(y);
-
-                if(roundX >= 0 && roundX < width && roundY >= 0 && roundY < height ){
-                    img.setRGB(roundX, roundY, 0xFFFFFF);
-                }
-
-            }
-        }
-
-
-    }
 
 
     @Override
@@ -505,10 +608,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(upDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.add(modelPos, forward);
             lightPos = Vector.add(lightPos, forward);
-//            camera = Vector.sub(camera, forward);
-//            target = Vector.sub(target, forward);
-//            upTarget = Vector.sub(upTarget, forward);
-//            rightTarget = Vector.sub(rightTarget, forward);
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
         }
@@ -516,10 +615,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(upDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.sub(modelPos, forward);
             lightPos = Vector.sub(lightPos, forward);
-//            camera = Vector.add(camera, forward);
-//            target = Vector.add(target, forward);
-//            upTarget = Vector.add(upTarget, forward);
-//            rightTarget = Vector.add(rightTarget, forward);
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
 
@@ -528,10 +623,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(rightDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.add(modelPos, forward);
             lightPos = Vector.add(lightPos, forward);
-//            camera = Vector.sub(camera, forward);
-//            target = Vector.sub(target, forward);
-//            upTarget = Vector.sub(upTarget, forward);
-//            rightTarget = Vector.sub(rightTarget, forward);
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
         }
@@ -539,10 +630,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(rightDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.sub(modelPos, forward);
             lightPos = Vector.sub(lightPos, forward);
-//            camera = Vector.add(camera, forward);
-//            target = Vector.add(target, forward);
-//            upTarget = Vector.add(upTarget, forward);
-//            rightTarget = Vector.add(rightTarget, forward);
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
         }
@@ -551,12 +638,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(lookDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.add(modelPos, forward);
             lightPos = Vector.add(lightPos, forward);
-//            camera = Vector.sub(camera, forward);
-//            target = Vector.sub(target, forward);
-//            upTarget = Vector.sub(upTarget, forward);
-//            rightTarget = Vector.sub(rightTarget, forward);
-
-
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
         }
@@ -564,12 +645,6 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
             Vector forward = Vector.prod(lookDir, 0.05d + camSpeed * 0.001d);
             modelPos = Vector.sub(modelPos, forward);
             lightPos = Vector.sub(lightPos, forward);
-//            camera = Vector.add(camera, forward);
-//            target = Vector.add(target, forward);
-//            upTarget = Vector.add(upTarget, forward);
-//            rightTarget = Vector.add(rightTarget, forward);
-
-
             if (camSpeed < camSpeedMax + 1)
                 camSpeed++;
         }
@@ -632,6 +707,22 @@ public class Screen extends JPanel implements KeyListener, MouseListener, MouseM
 
     @Override
     public void actionPerformed(ActionEvent e) {
+        if(MODE == Mode.Animation) {
+            Instant start = Instant.now();
+//            time = Duration.between(lastTime, start).toMillis();
+//            frame += 40 * time / 1000.d;
+            long time = Duration.between(START, start).toMillis();
+//            frame = (time % (FRAMES_COUNT * ANIMATION_FPS / 1000.d)) / (1000.d / ANIMATION_FPS);
+            double t = (framesCount * 1000.d / ANIMATION_FPS );
+            frame = (time % t) / (1000.d / ANIMATION_FPS) % framesCount;
+//            System.out.println(frame);
+
+//            if (frame > FRAMES_COUNT + 1) {
+////            frame = 0;
+//                frame = 1;
+//            }
+//        frame++;
+        }
         repaint();
     }
 }

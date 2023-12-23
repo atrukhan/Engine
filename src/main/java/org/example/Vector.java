@@ -64,7 +64,13 @@ public class Vector {
     }
 
 
-
+    public static Vector interpolate(Vector v1, Vector v2, double k){
+        return new Vector(
+                v1.x * (1 - k) + v2.x * k,
+                v1.y * (1 - k) + v2.y * k,
+                v1.z * (1 - k) + v2.z * k
+        );
+    }
 
 
     public static Vector intersectPlane(Vector plane1, Vector plane2, Vector lineStart, Vector lineEnd){
